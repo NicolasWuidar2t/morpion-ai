@@ -367,9 +367,17 @@ class MorpionAI {
             move: bestMove
         });
 
-        // Limit transposition table size
-        if (this.transpositionTable.size > 100000) {
-            this.clearTranspositionTable();
+        // Limit transposition table size and clean periodically
+        if (this.transpositionTable.size > 50000) {
+            // Keep only the most recent and valuable entries
+            const entries = Array.from(this.transpositionTable.entries());
+            entries.sort((a, b) => b[1].depth - a[1].depth); // Sort by depth
+            this.transpositionTable.clear();
+            
+            // Keep top 25000 entries
+            for (let i = 0; i < Math.min(25000, entries.length); i++) {
+                this.transpositionTable.set(entries[i][0], entries[i][1]);
+            }
         }
 
         return bestScore;
@@ -524,7 +532,10 @@ class MorpionAI {
 
     clearTranspositionTable() {
         this.transpositionTable.clear();
-        this.historyTable.fill(0);
+        // Reset history table with aging
+        for (let i = 0; i < this.historyTable.length; i++) {
+            this.historyTable[i] = Math.floor(this.historyTable[i] * 0.8); // Age factor
+        }
         this.principalVariation = [];
     }
 
