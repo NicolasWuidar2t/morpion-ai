@@ -18,9 +18,24 @@ class MorpionAI {
         // Optimizations
         this.transpositionTable = new Map();
         this.killerMoves = new Array(this.maxDepth + 1).fill(null).map(() => []);
+        this.historyTable = new Array(25).fill(0); // History heuristic
+        this.principalVariation = []; // PV line
         this.nodeCount = 0;
         this.cutoffs = 0;
         this.ttHits = 0;
+        this.pvHits = 0;
+        
+        // Web Worker support (optional)
+        this.useWebWorker = typeof Worker !== 'undefined';
+        this.aiWorker = null;
+        if (this.useWebWorker) {
+            try {
+                this.aiWorker = new Worker('ai-worker.js');
+            } catch (e) {
+                console.log('Web Worker not available, using main thread');
+                this.useWebWorker = false;
+            }
+        }
         
         this.initializeGame();
         this.setupEventListeners();
@@ -97,18 +112,50 @@ class MorpionAI {
         this.nodeCount = 0;
         this.cutoffs = 0;
         this.ttHits = 0;
+        this.pvHits = 0;
         
         const showThinking = document.getElementById('showAIThinking').checked;
         const speed = parseInt(document.getElementById('aiSpeed').value);
         
         try {
             const startTime = performance.now();
-            const bestMove = await this.getBestMoveWithVisualization(
-                [...this.board], 
-                this.currentPlayer, 
-                showThinking, 
-                speed
-            );
+            
+            // Check opening book first
+            const openingMove = this.getOpeningMove([...this.board]);
+            let bestMove = openingMove;
+            
+            if (openingMove === -1) {
+                // Try using Web Worker for better performance
+                if (this.useWebWorker && this.aiWorker && this.maxDepth >= 4) {
+                    try {
+                        const result = await this.calculateWithWorker([...this.board], this.currentPlayer);
+                        bestMove = result.move;
+                        if (result.stats) {
+                            const stats = `Worker - Temps: ${result.stats.time.toFixed(1)}ms | Nœuds: ${result.stats.nodes} | Coupures: ${result.stats.cutoffs} | TT: ${result.stats.ttHits} | PV: ${result.stats.pvHits}`;
+                            console.log(stats);
+                        }
+                    } catch (workerError) {
+                        console.log('Worker failed, falling back to main thread:', workerError);
+                        bestMove = await this.getBestMoveWithVisualization(
+                            [...this.board], 
+                            this.currentPlayer, 
+                            showThinking, 
+                            speed
+                        );
+                    }
+                } else {
+                    // Use main thread search
+                    bestMove = await this.getBestMoveWithVisualization(
+                        [...this.board], 
+                        this.currentPlayer, 
+                        showThinking, 
+                        speed
+                    );
+                }
+            } else {
+                console.log('Coup d\'ouverture utilisé:', openingMove);
+            }
+            
             const endTime = performance.now();
             
             if (bestMove !== -1) {
@@ -116,7 +163,7 @@ class MorpionAI {
             }
             
             // Display performance stats
-            const stats = `Temps: ${(endTime - startTime).toFixed(1)}ms | Nœuds: ${this.nodeCount} | Coupures: ${this.cutoffs} | TT: ${this.ttHits}`;
+            const stats = `Temps: ${(endTime - startTime).toFixed(1)}ms | Nœuds: ${this.nodeCount} | Coupures: ${this.cutoffs} | TT: ${this.ttHits} | PV: ${this.pvHits}`;
             console.log(stats);
             
         } catch (error) {
@@ -132,32 +179,59 @@ class MorpionAI {
         this.aiPlayer = currentPlayer;
         this.humanPlayer = currentPlayer === 1 ? 2 : 1;
         
-        // Reset killer moves for new search
+        // Reset for new search
         this.killerMoves = new Array(this.maxDepth + 1).fill(null).map(() => []);
+        this.principalVariation = [];
         
-        let bestScore = -Infinity;
         let bestMove = -1;
+        let bestScore = -Infinity;
         const rootSteps = [];
 
-        // Get all possible moves
-        const moves = this.getOrderedMoves(board, true);
-        
-        for (const move of moves) {
-            board[move] = this.aiPlayer;
-            const score = await this.minimax(board, this.maxDepth, false, -Infinity, Infinity, 1);
-            board[move] = 0;
-
-            rootSteps.push({ index: move, score: score });
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestMove = move;
-            }
+        // Iterative Deepening - start from depth 1 and increase
+        for (let depth = 1; depth <= this.maxDepth; depth++) {
+            const iterationStart = performance.now();
             
-            // Early termination for winning moves
-            if (score >= 10000) {
-                break;
+            let currentBestMove = -1;
+            let currentBestScore = -Infinity;
+            const currentRootSteps = [];
+
+            // Get ordered moves (use PV from previous iteration if available)
+            const moves = this.getOrderedMovesWithPV(board, true, 0, depth);
+            
+            for (const move of moves) {
+                board[move] = this.aiPlayer;
+                const score = await this.principalVariationSearch(
+                    board, depth - 1, false, -Infinity, Infinity, 1, true
+                );
+                board[move] = 0;
+
+                currentRootSteps.push({ index: move, score: score });
+
+                if (score > currentBestScore) {
+                    currentBestScore = score;
+                    currentBestMove = move;
+                }
+                
+                // Early termination for winning moves
+                if (score >= 10000) {
+                    bestMove = currentBestMove;
+                    bestScore = currentBestScore;
+                    break;
+                }
             }
+
+            // Update best move from this iteration
+            if (currentBestMove !== -1) {
+                bestMove = currentBestMove;
+                bestScore = currentBestScore;
+                rootSteps.splice(0, rootSteps.length, ...currentRootSteps);
+            }
+
+            const iterationTime = performance.now() - iterationStart;
+            console.log(`Profondeur ${depth}: ${iterationTime.toFixed(1)}ms, Score: ${currentBestScore}`);
+
+            // Break if we found a winning move
+            if (currentBestScore >= 10000) break;
         }
 
         // Visualisation des meilleurs coups
@@ -175,13 +249,13 @@ class MorpionAI {
         return bestMove;
     }
 
-    async minimax(board, depth, isMaximizing, alpha, beta, plyFromRoot = 0) {
+    async principalVariationSearch(board, depth, isMaximizing, alpha, beta, plyFromRoot = 0, isPVNode = false) {
         this.nodeCount++;
         
         // Check transposition table
         const boardKey = this.getBoardKey(board);
         const ttEntry = this.transpositionTable.get(boardKey);
-        if (ttEntry && ttEntry.depth >= depth) {
+        if (ttEntry && ttEntry.depth >= depth && !isPVNode) {
             this.ttHits++;
             if (ttEntry.type === 'exact') {
                 return ttEntry.score;
@@ -202,20 +276,54 @@ class MorpionAI {
 
         let bestScore = isMaximizing ? -Infinity : Infinity;
         let bestMove = -1;
-        let hashFlag = 'upper'; // Assume upper bound initially
+        let hashFlag = 'upper';
+        let searchPV = isPVNode;
 
-        // Get ordered moves for better pruning
-        const moves = this.getOrderedMoves(board, isMaximizing, plyFromRoot);
+        // Get ordered moves with PV move first
+        const moves = this.getOrderedMovesWithPV(board, isMaximizing, plyFromRoot, depth);
 
-        for (const move of moves) {
+        for (let i = 0; i < moves.length; i++) {
+            const move = moves[i];
             board[move] = isMaximizing ? this.aiPlayer : this.humanPlayer;
-            const score = await this.minimax(board, depth - 1, !isMaximizing, alpha, beta, plyFromRoot + 1);
+            
+            let score;
+            
+            if (searchPV) {
+                // Full window search for PV node
+                score = await this.principalVariationSearch(
+                    board, depth - 1, !isMaximizing, alpha, beta, plyFromRoot + 1, true
+                );
+                searchPV = false; // Only first move gets full search
+            } else {
+                // Null window search for remaining moves
+                const nullWindowAlpha = isMaximizing ? alpha : beta - 1;
+                const nullWindowBeta = isMaximizing ? alpha + 1 : beta;
+                
+                score = await this.principalVariationSearch(
+                    board, depth - 1, !isMaximizing, nullWindowAlpha, nullWindowBeta, plyFromRoot + 1, false
+                );
+                
+                // If null window search fails, re-search with full window
+                if ((isMaximizing && score > alpha && score < beta) || 
+                    (!isMaximizing && score > alpha && score < beta)) {
+                    this.pvHits++;
+                    score = await this.principalVariationSearch(
+                        board, depth - 1, !isMaximizing, alpha, beta, plyFromRoot + 1, true
+                    );
+                }
+            }
+            
             board[move] = 0;
 
             if (isMaximizing) {
                 if (score > bestScore) {
                     bestScore = score;
                     bestMove = move;
+                    
+                    // Update principal variation
+                    if (plyFromRoot === 0) {
+                        this.principalVariation[0] = move;
+                    }
                 }
                 alpha = Math.max(alpha, bestScore);
             } else {
@@ -228,6 +336,10 @@ class MorpionAI {
 
             if (beta <= alpha) {
                 this.cutoffs++;
+                
+                // Update history table
+                this.historyTable[move] += depth * depth;
+                
                 // Store killer move
                 if (bestMove !== -1 && !this.killerMoves[plyFromRoot].includes(bestMove)) {
                     this.killerMoves[plyFromRoot].unshift(bestMove);
@@ -263,15 +375,103 @@ class MorpionAI {
         return bestScore;
     }
 
-    getOrderedMoves(board, isMaximizing, plyFromRoot = 0) {
-        const moves = [];
-        const centerBonus = 5; // Bonus for center positions
+    getOpeningMove(board) {
+        const moveCount = board.filter(cell => cell !== 0).length;
         
-        // Collect all available moves with initial scoring
+        // Opening book for first few moves
+        if (moveCount === 0) {
+            // First move: take center
+            return 12; // Center position (2,2)
+        }
+        
+        if (moveCount === 1) {
+            // Second move: respond to opponent
+            if (board[12] === 0) {
+                return 12; // Take center if available
+            } else {
+                // If center is taken, take a corner
+                const corners = [0, 4, 20, 24];
+                for (const corner of corners) {
+                    if (board[corner] === 0) return corner;
+                }
+            }
+        }
+        
+        if (moveCount === 2) {
+            // Third move: continue center strategy or block
+            const strategicMoves = [12, 6, 8, 16, 18]; // Center and adjacent
+            for (const move of strategicMoves) {
+                if (board[move] === 0) {
+                    // Quick threat check
+                    board[move] = this.currentPlayer;
+                    const hasImportantThreat = this.evaluateBoard(board) > 100;
+                    board[move] = 0;
+                    if (hasImportantThreat) return move;
+                }
+            }
+        }
+        
+        return -1; // No opening move found, use search
+    }
+
+    async calculateWithWorker(board, currentPlayer) {
+        return new Promise((resolve, reject) => {
+            const requestId = Date.now() + Math.random();
+            
+            const timeout = setTimeout(() => {
+                reject(new Error('Worker timeout'));
+            }, 30000); // 30 second timeout
+            
+            const handleMessage = (e) => {
+                if (e.data.requestId === requestId) {
+                    clearTimeout(timeout);
+                    this.aiWorker.removeEventListener('message', handleMessage);
+                    
+                    if (e.data.success) {
+                        resolve(e.data.result);
+                    } else {
+                        reject(new Error(e.data.error));
+                    }
+                }
+            };
+            
+            this.aiWorker.addEventListener('message', handleMessage);
+            this.aiWorker.postMessage({
+                board,
+                currentPlayer,
+                maxDepth: this.maxDepth,
+                requestId
+            });
+        });
+    }
+
+    getOrderedMovesWithPV(board, isMaximizing, plyFromRoot = 0, depth = 0) {
+        const moves = [];
+        const centerBonus = 5;
+        
+        // Get PV move from transposition table or previous iteration
+        let pvMove = null;
+        const boardKey = this.getBoardKey(board);
+        const ttEntry = this.transpositionTable.get(boardKey);
+        if (ttEntry && ttEntry.move !== -1) {
+            pvMove = ttEntry.move;
+        } else if (plyFromRoot === 0 && this.principalVariation.length > 0) {
+            pvMove = this.principalVariation[0];
+        }
+        
+        // Collect all available moves with scoring
         for (let i = 0; i < board.length; i++) {
             if (board[i] !== 0) continue;
             
             let score = 0;
+            
+            // PV move gets highest priority
+            if (i === pvMove) {
+                score += 1000000;
+            }
+            
+            // History heuristic
+            score += this.historyTable[i];
             
             // Center control bonus
             const x = i % this.BOARD_SIZE;
@@ -284,28 +484,33 @@ class MorpionAI {
             const immediateEval = this.evaluateBoard(board);
             board[i] = 0;
             
-            score += immediateEval;
+            score += immediateEval * 10; // Increased weight for tactical moves
             
             moves.push({ index: i, score });
         }
 
-        // Sort moves by score (best first for maximizing, worst first for minimizing)
+        // Sort moves by score
         moves.sort((a, b) => isMaximizing ? b.score - a.score : a.score - b.score);
         
-        // Add killer moves to the front
+        // Add killer moves to the front (after PV move)
         const killers = this.killerMoves[plyFromRoot] || [];
         const orderedMoves = [];
         
-        // First, add killer moves that are valid
+        // First, add PV move if valid
+        if (pvMove !== null && board[pvMove] === 0) {
+            orderedMoves.push(pvMove);
+        }
+        
+        // Then add killer moves that are valid and not PV
         for (const killer of killers) {
-            if (board[killer] === 0) {
+            if (board[killer] === 0 && killer !== pvMove) {
                 orderedMoves.push(killer);
             }
         }
         
-        // Then add other moves, skipping killer moves
+        // Finally add other moves, skipping PV and killer moves
         for (const move of moves) {
-            if (!killers.includes(move.index)) {
+            if (move.index !== pvMove && !killers.includes(move.index)) {
                 orderedMoves.push(move.index);
             }
         }
@@ -319,6 +524,8 @@ class MorpionAI {
 
     clearTranspositionTable() {
         this.transpositionTable.clear();
+        this.historyTable.fill(0);
+        this.principalVariation = [];
     }
 
     evaluateWinner(board) {
