@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benchmark IA Minimax</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .benchmark-results {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            cursor: pointer;
+        }
+        .test-board {
+            display: grid;
+            grid-template-columns: repeat(5, 30px);
+            gap: 2px;
+            margin: 10px 0;
+        }
+        .test-cell {
+            width: 30px;
+            height: 30px;
+            border: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧠 Benchmark IA Minimax</h1>
+    <p>Test de performance de l'algorithme minimax avec différentes optimisations.</p>
+    
+    <button onclick="runBenchmark()">Lancer le Benchmark</button>
+    <button onclick="clearResults()">Effacer les résultats</button>
+    
+    <div id="results"></div>
+
+    <script src="morpion-ai.js"></script>
+    <script>
+        class AIBenchmark {
+            constructor() {
+                this.testPositions = [
+                    // Position de départ
+                    [0,0,0,0,0, 0,0,0,0,0, 0,0,1,0,0, 0,0,0,0,0, 0,0,0,0,0],
+                    // Position milieu de jeu
+                    [1,0,2,0,0, 0,1,2,0,0, 0,0,1,2,0, 0,0,0,0,0, 0,0,0,0,0],
+                    // Position critique (menace)
+                    [1,1,1,0,0, 2,2,0,2,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0],
+                    // Position complexe
+                    [1,2,1,2,0, 2,1,2,1,0, 1,2,1,0,0, 0,0,0,0,0, 0,0,0,0,0]
+                ];
+            }
+
+            async benchmarkPosition(board, depth, player) {
+                const ai = new MorpionAI();
+                ai.maxDepth = depth;
+                ai.board = [...board];
+                
+                const startTime = performance.now();
+                const bestMove = await ai.getBestMoveWithVisualization(board, player, false, 0);
+                const endTime = performance.now();
+                
+                return {
+                    move: bestMove,
+                    time: endTime - startTime,
+                    depth: depth
+                };
+            }
+
+            displayBoard(board, containerId) {
+                const container = document.getElementById(containerId);
+                container.innerHTML = '';
+                const boardDiv = document.createElement('div');
+                boardDiv.className = 'test-board';
+                
+                for (let i = 0; i < 25; i++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'test-cell';
+                    cell.textContent = board[i] === 1 ? 'O' : board[i] === 2 ? 'X' : '';
+                    boardDiv.appendChild(cell);
+                }
+                container.appendChild(boardDiv);
+            }
+
+            async runFullBenchmark() {
+                const results = document.getElementById('results');
+                results.innerHTML = '<h2>Benchmark en cours...</h2>';
+                
+                const allResults = [];
+                
+                for (let i = 0; i < this.testPositions.length; i++) {
+                    const board = this.testPositions[i];
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = 'benchmark-results';
+                    resultDiv.innerHTML = `<h3>Test Position ${i + 1}</h3><div id="board-${i}"></div>`;
+                    results.appendChild(resultDiv);
+                    
+                    this.displayBoard(board, `board-${i}`);
+                    
+                    const positionResults = [];
+                    
+                    // Test différentes profondeurs
+                    for (let depth = 2; depth <= 5; depth++) {
+                        const result = await this.benchmarkPosition(board, depth, 1);
+                        positionResults.push(result);
+                        
+                        const resultP = document.createElement('p');
+                        resultP.innerHTML = `Profondeur ${depth}: ${result.time.toFixed(2)}ms - Coup: ${result.move}`;
+                        resultDiv.appendChild(resultP);
+                    }
+                    
+                    allResults.push({
+                        position: i + 1,
+                        results: positionResults
+                    });
+                }
+                
+                // Résumé
+                const summaryDiv = document.createElement('div');
+                summaryDiv.className = 'benchmark-results';
+                summaryDiv.innerHTML = '<h3>Résumé des performances</h3>';
+                
+                const avgTimes = {};
+                for (let depth = 2; depth <= 5; depth++) {
+                    const times = allResults.flatMap(r => r.results.filter(res => res.depth === depth).map(res => res.time));
+                    const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+                    avgTimes[depth] = avgTime;
+                    
+                    const avgP = document.createElement('p');
+                    avgP.innerHTML = `<strong>Profondeur ${depth}: ${avgTime.toFixed(2)}ms (moyenne)</strong>`;
+                    summaryDiv.appendChild(avgP);
+                }
+                
+                results.appendChild(summaryDiv);
+                
+                return avgTimes;
+            }
+        }
+
+        const benchmark = new AIBenchmark();
+
+        async function runBenchmark() {
+            const results = await benchmark.runFullBenchmark();
+            console.log('Benchmark terminé:', results);
+        }
+
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+        }
+    </script>
+</body>
+</html>

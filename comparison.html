@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparaison IA Minimax - Original vs Optimisé</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .comparison-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin: 20px 0;
+        }
+        .ai-section {
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .benchmark-results {
+            margin: 15px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .btn-primary {
+            background: #38a169;
+            color: white;
+        }
+        .btn-secondary {
+            background: #e53e3e;
+            color: white;
+        }
+        .stats {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+        }
+        .test-board {
+            display: grid;
+            grid-template-columns: repeat(5, 25px);
+            gap: 1px;
+            margin: 10px 0;
+        }
+        .test-cell {
+            width: 25px;
+            height: 25px;
+            border: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+        }
+        h1, h2 {
+            text-align: center;
+        }
+        .performance-summary {
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧠 Comparaison IA Minimax</h1>
+    <p style="text-align: center;">Comparaison de performance entre l'IA originale et l'IA optimisée</p>
+    
+    <div class="performance-summary">
+        <h2>Résultats du Benchmark</h2>
+        <button onclick="runFullComparison()" class="btn-primary">Lancer Comparaison Complète</button>
+        <button onclick="clearAllResults()" class="btn-secondary">Effacer</button>
+        <div id="summaryResults"></div>
+    </div>
+
+    <div class="comparison-container">
+        <div class="ai-section">
+            <h2>IA Originale</h2>
+            <p>Minimax classique avec élagage Alpha-Beta</p>
+            <button onclick="benchmarkOriginal()" class="btn-primary">Test Original</button>
+            <div id="originalResults"></div>
+        </div>
+
+        <div class="ai-section">
+            <h2>IA Optimisée</h2>
+            <p>Avec tri des coups, table de transposition, coups tueurs</p>
+            <button onclick="benchmarkOptimized()" class="btn-primary">Test Optimisé</button>
+            <div id="optimizedResults"></div>
+        </div>
+    </div>
+
+    <!-- Load both AI implementations -->
+    <script src="morpion-ai.js"></script>
+    <script>
+        // Rename original class
+        window.OriginalMorpionAI = window.MorpionAI;
+    </script>
+    <script src="morpion-ai-optimized.js"></script>
+    <script>
+        // Rename optimized class
+        window.OptimizedMorpionAI = window.MorpionAI;
+    </script>
+    
+    <script>
+        class AIComparison {
+            constructor() {
+                this.testPositions = [
+                    // Position de départ
+                    [0,0,0,0,0, 0,0,0,0,0, 0,0,1,0,0, 0,0,0,0,0, 0,0,0,0,0],
+                    // Position milieu de jeu
+                    [1,0,2,0,0, 0,1,2,0,0, 0,0,1,2,0, 0,0,0,0,0, 0,0,0,0,0],
+                    // Position critique (menace immédiate)
+                    [1,1,1,0,0, 2,2,0,2,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0],
+                    // Position complexe
+                    [1,2,1,2,0, 2,1,2,1,0, 1,2,1,0,0, 0,0,0,0,0, 0,0,0,0,0],
+                    // Position tardive
+                    [1,2,1,2,1, 2,1,2,1,2, 1,2,0,2,1, 2,1,2,1,0, 1,2,1,2,1]
+                ];
+            }
+
+            async benchmarkAI(aiClass, board, depth, player) {
+                const ai = new aiClass();
+                ai.maxDepth = depth;
+                ai.board = [...board];
+                
+                const startTime = performance.now();
+                const bestMove = await ai.getBestMoveWithVisualization(board, player, false, 0);
+                const endTime = performance.now();
+                
+                const stats = {
+                    move: bestMove,
+                    time: endTime - startTime,
+                    depth: depth,
+                    nodes: ai.nodeCount || 0,
+                    cutoffs: ai.cutoffs || 0,
+                    ttHits: ai.ttHits || 0
+                };
+                
+                return stats;
+            }
+
+            displayBoard(board, containerId) {
+                const container = document.getElementById(containerId);
+                const boardDiv = document.createElement('div');
+                boardDiv.className = 'test-board';
+                
+                for (let i = 0; i < 25; i++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'test-cell';
+                    cell.textContent = board[i] === 1 ? 'O' : board[i] === 2 ? 'X' : '';
+                    boardDiv.appendChild(cell);
+                }
+                container.appendChild(boardDiv);
+            }
+
+            async benchmarkVersion(aiClass, resultContainerId, versionName) {
+                const container = document.getElementById(resultContainerId);
+                container.innerHTML = `<h3>Benchmark ${versionName} en cours...</h3>`;
+                
+                const allResults = [];
+                
+                for (let i = 0; i < this.testPositions.length; i++) {
+                    const board = this.testPositions[i];
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = 'benchmark-results';
+                    resultDiv.innerHTML = `<h4>Position ${i + 1}</h4>`;
+                    container.appendChild(resultDiv);
+                    
+                    this.displayBoard(board, resultContainerId);
+                    
+                    const positionResults = [];
+                    
+                    // Test profondeurs 3 et 4
+                    for (let depth of [3, 4]) {
+                        const result = await this.benchmarkAI(aiClass, board, depth, 1);
+                        positionResults.push(result);
+                        
+                        const resultP = document.createElement('p');
+                        resultP.innerHTML = `
+                            <strong>Prof. ${depth}:</strong> 
+                            ${result.time.toFixed(1)}ms | 
+                            Coup: ${result.move} | 
+                            Nœuds: ${result.nodes} | 
+                            Coupures: ${result.cutoffs}
+                            ${result.ttHits ? ` | TT: ${result.ttHits}` : ''}
+                        `;
+                        resultDiv.appendChild(resultP);
+                    }
+                    
+                    allResults.push({
+                        position: i + 1,
+                        results: positionResults
+                    });
+                }
+                
+                return allResults;
+            }
+
+            calculateSummary(originalResults, optimizedResults) {
+                const summary = {
+                    original: { avgTime: {}, totalNodes: {}, totalCutoffs: {} },
+                    optimized: { avgTime: {}, totalNodes: {}, totalCutoffs: {}, totalTTHits: {} }
+                };
+
+                // Calculate averages for each depth
+                for (let depth of [3, 4]) {
+                    const origTimes = originalResults.flatMap(r => 
+                        r.results.filter(res => res.depth === depth).map(res => res.time)
+                    );
+                    const optTimes = optimizedResults.flatMap(r => 
+                        r.results.filter(res => res.depth === depth).map(res => res.time)
+                    );
+                    
+                    const origNodes = originalResults.flatMap(r => 
+                        r.results.filter(res => res.depth === depth).map(res => res.nodes)
+                    );
+                    const optNodes = optimizedResults.flatMap(r => 
+                        r.results.filter(res => res.depth === depth).map(res => res.nodes)
+                    );
+
+                    summary.original.avgTime[depth] = origTimes.reduce((a, b) => a + b, 0) / origTimes.length;
+                    summary.optimized.avgTime[depth] = optTimes.reduce((a, b) => a + b, 0) / optTimes.length;
+                    
+                    summary.original.totalNodes[depth] = origNodes.reduce((a, b) => a + b, 0);
+                    summary.optimized.totalNodes[depth] = optNodes.reduce((a, b) => a + b, 0);
+                }
+
+                return summary;
+            }
+
+            displaySummary(summary) {
+                const container = document.getElementById('summaryResults');
+                container.innerHTML = '<h3>Résumé Comparatif</h3>';
+                
+                const table = document.createElement('table');
+                table.style.width = '100%';
+                table.style.borderCollapse = 'collapse';
+                table.innerHTML = `
+                    <tr style="background: #f0f0f0; border: 1px solid #ccc;">
+                        <th style="padding: 8px; border: 1px solid #ccc;">Métrique</th>
+                        <th style="padding: 8px; border: 1px solid #ccc;">Prof. 3</th>
+                        <th style="padding: 8px; border: 1px solid #ccc;">Prof. 4</th>
+                        <th style="padding: 8px; border: 1px solid #ccc;">Amélioration</th>
+                    </tr>
+                `;
+                
+                for (let depth of [3, 4]) {
+                    const speedup = (summary.original.avgTime[depth] / summary.optimized.avgTime[depth]).toFixed(2);
+                    const nodeReduction = ((1 - summary.optimized.totalNodes[depth] / summary.original.totalNodes[depth]) * 100).toFixed(1);
+                    
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td style="padding: 8px; border: 1px solid #ccc;"><strong>Temps (Prof. ${depth})</strong></td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${summary.original.avgTime[depth].toFixed(1)}ms</td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${summary.optimized.avgTime[depth].toFixed(1)}ms</td>
+                        <td style="padding: 8px; border: 1px solid #ccc; color: green;"><strong>${speedup}x plus rapide</strong></td>
+                    `;
+                    table.appendChild(row);
+                    
+                    const nodeRow = document.createElement('tr');
+                    nodeRow.innerHTML = `
+                        <td style="padding: 8px; border: 1px solid #ccc;"><strong>Nœuds (Prof. ${depth})</strong></td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${summary.original.totalNodes[depth].toLocaleString()}</td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${summary.optimized.totalNodes[depth].toLocaleString()}</td>
+                        <td style="padding: 8px; border: 1px solid #ccc; color: green;"><strong>-${nodeReduction}%</strong></td>
+                    `;
+                    table.appendChild(nodeRow);
+                }
+                
+                container.appendChild(table);
+            }
+        }
+
+        const comparison = new AIComparison();
+
+        async function benchmarkOriginal() {
+            await comparison.benchmarkVersion(window.OriginalMorpionAI, 'originalResults', 'Original');
+        }
+
+        async function benchmarkOptimized() {
+            await comparison.benchmarkVersion(window.OptimizedMorpionAI, 'optimizedResults', 'Optimisé');
+        }
+
+        async function runFullComparison() {
+            document.getElementById('summaryResults').innerHTML = '<p>Comparaison en cours...</p>';
+            
+            const originalResults = await comparison.benchmarkVersion(window.OriginalMorpionAI, 'originalResults', 'Original');
+            const optimizedResults = await comparison.benchmarkVersion(window.OptimizedMorpionAI, 'optimizedResults', 'Optimisé');
+            
+            const summary = comparison.calculateSummary(originalResults, optimizedResults);
+            comparison.displaySummary(summary);
+        }
+
+        function clearAllResults() {
+            document.getElementById('originalResults').innerHTML = '';
+            document.getElementById('optimizedResults').innerHTML = '';
+            document.getElementById('summaryResults').innerHTML = '';
+        }
+    </script>
+</body>
+</html>
